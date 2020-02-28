@@ -1,0 +1,292 @@
+#define WATER_DEPTH 2.1
+#define DRAG_MULT 0.048
+#define ITERATIONS_RAYMARCH 13
+#define EPSILON 0.01
+
+
+vec2 random(vec2 p) {
+    return fract(sin(vec2(dot(p, vec2(127.1, 311.7)), dot(p, vec2(269.5, 183.3)))) * 43758.5453);
+}
+
+// Worley noise
+float worley(vec2 pos) {
+  // The dimensions of the cell division, based on the dimensions of the screen.
+  float m = 2.1;
+  float n = 2.1;
+
+  // The cell where the current point is
+  vec2 p = vec2(floor((pos.x) * m), floor((pos.y) * n));
+
+  // The random point within that cell
+  vec2 randVec = p + random(p);
+
+  // Variables to keep track of the closest random point to the current point and their distance
+  vec2 final_point = randVec;
+  vec2 curr_rand = randVec;
+  float dist = 999999.00;
+  float dist2 = 999999.00;
+  float dist3 = 999999.00;
+
+  float result = 0.0;
+
+  // Worley Noise
+  for (int i = 0; i < 3; i++) {
+    for (int j = 0; j < 3; j++) {
+      float i_float = float(i);
+      float j_float = float(j);
+      // Random point at the current cell.
+      curr_rand = vec2(p[0] + i_float - 1.0, p[1] + j_float - 1.0) + random(vec2 (p[0] + i_float - 1.0, p[1] + j_float - 1.0));
+      // Distance from random point to current point.
+      float curr_dist = sqrt(pow((pos.x) * m - curr_rand[0], 2.0) + pow((pos.y) * n - curr_rand[1], 2.0));
+      // If the distance is smaller than previous distance, store that distance and the current random point.
+      if (curr_dist < dist) {
+        dist2 = dist;
+        dist = curr_dist;
+        final_point = curr_rand;
+      }
+      else if (curr_dist < dist2) {
+        dist3 = dist2;
+        dist2 = curr_dist;
+      }
+      else if (curr_dist < dist3) {
+        dist3 = curr_dist;
+      }
+    }
+  }
+
+  result = -dist + dist2;
+  result = pow(clamp(result, 0.1, 0.9) - 0.1, 0.5);
+
+  return result;
+}
+
+
+float fbm5(vec2 p) {
+    // Initialize the variables to be used
+    float total = 0.0;
+    float amplitude = 0.5;
+    int octaves = 12;
+
+    // For loop that interates through octaves
+    for (int i = 0; i < octaves; i++) {
+        total += amplitude * worley(p);
+        p *= 1.5;
+        amplitude *= .7;
+    }
+
+    return total;
+}
+
+
+
+// From: https://www.shadertoy.com/view/4s23zz
+float pattern( in vec2 p, out vec2 q, out vec2 r )
+{
+    q.x = fbm5( p + vec2(0.0,0.0) );
+    q.y = fbm5( p + vec2(5.2,1.3) );
+
+    r.x = fbm5( p + 4.0*q + vec2(1.7,9.2) );
+    r.y = fbm5( p + 4.0*q + vec2(8.3,2.8) );
+
+    return fbm5( p  );
+}
+
+
+
+// Transform functions
+vec3 rotX(vec3 p, float x) {
+  x = radians(x);
+  float c = cos(x);
+  float s = sin(x);
+  return vec3(p.x, c*p.y-s*p.z, s*p.y+c*p.z);
+}
+
+vec3 rotY(vec3 p, float y) {
+  y = radians(y);
+  float c = cos(y);
+  float s = sin(y);
+  return vec3(c*p.x+s*p.z, p.y, -s*p.x+c*p.z);
+}
+
+vec3 rotZ(vec3 p, float z) {
+  z = radians(z);
+  float c = cos(z);
+  float s = sin(z);
+  return vec3(c*p.x-s*p.y, s*p.x+c*p.y, p.z);
+}
+
+
+
+// SDFs from http://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm
+float dot2(in vec2 v ) {return dot(v,v);}
+
+float sdCappedCone( vec3 p, float h, float r1, float r2 )
+{
+  vec2 q = vec2( length(p.xz), p.y );
+  vec2 k1 = vec2(r2,h);
+  vec2 k2 = vec2(r2-r1,2.0*h);
+  vec2 ca = vec2(q.x-min(q.x,(q.y<0.0)?r1:r2), abs(q.y)-h);
+  vec2 cb = q - k1 + k2*clamp( dot(k1-q,k2)/dot2(k2), 0.0, 1.0 );
+  float s = (cb.x<0.0 && ca.y<0.0) ? -1.0 : 1.0;
+  return s*sqrt( min(dot2(ca),dot2(cb)) );
+}
+
+float sdSphere( vec3 p, float s )
+{
+  return length(p) - s;
+}
+
+float opSmoothUnion( float d1, float d2, float k ) {
+    float h = clamp( 0.5 + 0.5*(d2-d1)/k, 0.0, 1.0 );
+    return mix( d2, d1, h ) - k*h*(1.0-h);
+}
+
+// Ray marching
+// Based on: https://www.shadertoy.com/view/Xds3zN
+vec2 map(vec3 pos) {
+    vec2 result = vec2( 1e10, 0.0 );
+
+    vec3 newPos = rotZ(pos + vec3(-2.6, 0.0, -0.2), -5.5) / 0.9;
+    float cone = sdCappedCone((newPos + vec3(0.0, -2.43, 0.0)), 0.08, 0.22, 0.01);
+    float sphere = sdSphere(newPos + vec3(0.0, -2.55, 0.0), 0.025);
+
+    float top = opSmoothUnion(cone, sphere, 0.02);
+    if (top < result.x) {
+        result.x = top;
+        result.y = 0.0;
+    }
+
+    top = top * 0.9;
+
+    float pat = fbm5(pos.xy);
+    top = mix(top, top * pat, 0.4);
+
+    // Warped fbm
+    vec2 q2 = vec2( fbm5( pos.xy + vec2(0.0,0.0) ), fbm5( pos.xy + vec2(5.2,1.3) ) );
+    float f = fbm5( pos.xy + 3.0*q2 );
+    cone = mix(top, top * f, 0.1);
+
+    if (cone < result.x) {
+        result.x = cone - 0.01;
+        result.y = 1.0;
+    }
+
+
+    return result;
+}
+
+
+vec2 rayCast(vec3 orig, vec3 dir) {
+    vec2 result = vec2(-1.0, -1.0);
+    float tmin = 1.0;
+    float tmax = 20.0;
+
+    float t = tmin;
+    for (int i = 0; i < 70 && t < tmax; i++) {
+        vec3 pos = orig + dir * t;
+        vec2 isect = map(pos);
+        if (isect.x < 0.0001) {
+            result = vec2(t, isect.y);
+            break;
+        }
+        t += isect.x;
+    }
+
+    return result;
+}
+
+
+
+// From: https://www.shadertoy.com/view/Xds3zNs
+mat3 setCamera( in vec3 ro, in vec3 ta, float cr )
+{
+	vec3 cw = normalize(ta-ro);
+	vec3 cp = vec3(sin(cr), cos(cr),0.0);
+	vec3 cu = normalize( cross(cw,cp) );
+	vec3 cv =          ( cross(cu,cw) );
+    return mat3( cu, cv, cw );
+}
+
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    // Normalized pixel coordinates (from 0 to 1)
+    vec2 uv = fragCoord/iResolution.xy;
+
+
+    vec3 colAll = texture( iChannel0, uv ).xyz;
+
+    // Calculate camera psition/direction.
+    vec2  p = (2.0*fragCoord-iResolution.xy)/iResolution.y;
+    vec3 ta = vec3( 0.0, 0.0, 0.0 );
+    vec3 ro = ta + vec3( 4.5, 1.0 + 2.0, 4.5 );
+    mat3 ca = setCamera( ro, ta, 0.0);
+    vec3 rd = ca * normalize( vec3(p,2.5) );
+
+    // Make sure top of the lighthouse overlaps light beam
+    vec2 isect = rayCast(ro, rd);
+    if (isect.x > 0.0001) {
+        fragColor = vec4(colAll, 1.0);
+    }
+
+    else {
+
+        // Gaussian blur:
+        // Calculate the dimensions of a pixel.
+        float width = 1.0 / iResolution.x;
+        float height = 1.0 / iResolution.y;
+
+
+        // Calculate the values of all the colors that will produce a 5x5 kernel
+        // having the current pixel at the center
+
+        vec3 colBeam = texture( iChannel1, uv ).xyz;
+        vec3 col = colAll + colBeam;
+
+        // The 8 color values of the pixels surrounding the current pixel
+        vec3 col1 = texture(iChannel1, vec2(uv.x + width, uv.y + height)).rgb;
+        vec3 col2 = texture(iChannel1, vec2(uv.x + width, uv.y - height)).rgb;
+        vec3 col3 = texture(iChannel1, vec2(uv.x - width, uv.y + height)).rgb;
+        vec3 col4 = texture(iChannel1, vec2(uv.x - width, uv.y - height)).rgb;
+        vec3 col5 = texture(iChannel1, vec2(uv.x + width, uv.y)).rgb;
+        vec3 col6 = texture(iChannel1, vec2(uv.x - width, uv.y)).rgb;
+        vec3 col7 = texture(iChannel1, vec2(uv.x, uv.y + height)).rgb;
+        vec3 col8 = texture(iChannel1, vec2(uv.x, uv.y - height)).rgb;
+
+        // The next 16 pixel colors surrounding the previous 8 pixels, for a total of 25 colors (5 x 5)
+        vec3 col9 = texture(iChannel1, vec2(uv.x + 2.0 * width, uv.y + 2.0 * height)).rgb;
+        vec3 col10 = texture(iChannel1, vec2(uv.x + 2.0 * width, uv.y - 2.0 * height)).rgb;
+        vec3 col11 = texture(iChannel1, vec2(uv.x - 2.0 * width, uv.y + 2.0 * height)).rgb;
+        vec3 col12 = texture(iChannel1, vec2(uv.x - 2.0 * width, uv.y - 2.0 * height)).rgb;
+
+        vec3 col13 = texture(iChannel1, vec2(uv.x + 2.0 * width, uv.y + height)).rgb;
+        vec3 col14 = texture(iChannel1, vec2(uv.x - 2.0 * width, uv.y + height)).rgb;
+        vec3 col15 = texture(iChannel1, vec2(uv.x + width, uv.y + 2.0 * height)).rgb;
+        vec3 col16 = texture(iChannel1, vec2(uv.x + width, uv.y - 2.0 * height)).rgb;
+        vec3 col17 = texture(iChannel1, vec2(uv.x + 2.0 * width, uv.y - height)).rgb;
+        vec3 col18 = texture(iChannel1, vec2(uv.x - 2.0 * width, uv.y - height)).rgb;
+        vec3 col19 = texture(iChannel1, vec2(uv.x - width, uv.y + 2.0 * height)).rgb;
+        vec3 col20 = texture(iChannel1, vec2(uv.x - width, uv.y - 2.0 * height)).rgb;
+
+        vec3 col21 = texture(iChannel1, vec2(uv.x + 2.0 * width, uv.y)).rgb;
+        vec3 col22 = texture(iChannel1, vec2(uv.x - 2.0 * width, uv.y)).rgb;
+        vec3 col23 = texture(iChannel1, vec2(uv.x, uv.y + 2.0 * height)).rgb;
+        vec3 col24 = texture(iChannel1, vec2(uv.x, uv.y - 2.0 * height)).rgb;
+
+
+        // Calculate the final color by using the kernel values calulated at:
+        // http://dev.theomader.com/gaussian-kernel-calculator/
+        // having sigma = 20 and kernel size = 5
+        vec3 color = (colBeam * 0.0402 +
+                 col1 * 	0.0401 + col2 * 	0.0401 + col3 * 	0.0401 + col4 * 	0.0401
+                 + col5 * 0.04015 + col6 * 0.04015 + col7 * 0.04015 + col8 * 0.04015
+                 + col9 * 0.0398 + col10 * 0.0398 + col11 * 0.0398 + col12 * 0.0398
+                 + col13 * 0.03995 + col14 * 0.03995 + col15 * 0.03995 + col16 * 0.03995
+                 + col17 * 0.03995 + col18 * 0.03995 + col19 * 0.03995 + col20 * 0.03995
+                 + col21 * 0.04 + col22 * 0.04 + col23 * 0.04 + col24 * 0.04);
+
+
+
+        fragColor = vec4(colAll + color, 1.0);
+    }
+} 

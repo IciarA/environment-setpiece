@@ -1,0 +1,131 @@
+// Transform functions
+vec3 rotX(vec3 p, float x) {
+  x = radians(x);
+  float c = cos(x);
+  float s = sin(x);
+  return vec3(p.x, c*p.y-s*p.z, s*p.y+c*p.z);
+}
+
+vec3 rotY(vec3 p, float y) {
+  y = radians(y);
+  float c = cos(y);
+  float s = sin(y);
+  return vec3(c*p.x+s*p.z, p.y, -s*p.x+c*p.z);
+}
+
+vec3 rotZ(vec3 p, float z) {
+  z = radians(z);
+  float c = cos(z);
+  float s = sin(z);
+  return vec3(c*p.x-s*p.y, s*p.x+c*p.y, p.z);
+}
+
+
+// SDFs from http://www.iquilezles.org/www/articles/distfunctions/distfunctions.htm
+float dot2(in vec2 v ) {return dot(v,v);}
+
+float sdCappedCone( vec3 p, float h, float r1, float r2 )
+{
+  vec2 q = vec2( length(p.xz), p.y );
+  vec2 k1 = vec2(r2,h);
+  vec2 k2 = vec2(r2-r1,2.0*h);
+  vec2 ca = vec2(q.x-min(q.x,(q.y<0.0)?r1:r2), abs(q.y)-h);
+  vec2 cb = q - k1 + k2*clamp( dot(k1-q,k2)/dot2(k2), 0.0, 1.0 );
+  float s = (cb.x<0.0 && ca.y<0.0) ? -1.0 : 1.0;
+  return s*sqrt( min(dot2(ca),dot2(cb)) );
+}
+
+
+vec2 mapBeam(vec3 pos) {
+    vec2 result = vec2( 1e10, 0.0 );
+
+    float light = sdCappedCone(rotX(rotZ(pos, -95.0) + vec3(0.0, 2.5, 0.0), iTime * (180.0 / 3.1415)) - vec3(1.78, 3.0, 0.0), 3.0, 0.0, 0.5);
+
+    if (light < result.x) {
+        result.x = light;
+        result.y = 2.0;
+    }
+
+    return result;
+}
+
+
+vec2 rayCastBeam(vec3 orig, vec3 dir) {
+    vec2 result = vec2(-1.0, -1.0);
+    float tmin = 1.0;
+    float tmax = 20.0;
+
+    float t = tmin;
+    for (int i = 0; i < 70 && t < tmax; i++) {
+        vec3 pos = orig + dir * t;
+        vec2 isect = mapBeam(pos);
+        if (isect.x < 0.0001) {
+            result = vec2(t, isect.y);
+            break;
+        }
+        t += isect.x;
+    }
+
+    return result;
+}
+
+
+vec3 fog(vec3 p, vec3 dir, vec3 dirSky) {
+
+    float light = sdCappedCone((rotZ(p, -95.0)) - vec3(1.78, 0.0, 0.0), 2.5, 0.0, 0.5);
+
+    vec2 isect = rayCastBeam(p, normalize(vec3(0.0, 0.0, 0.0)));
+    vec3 p2 = p + isect.x * dir;
+    float dist = length(p2);
+
+    vec3 col = vec3(0.0, 0.0, 0.0);
+
+    if (isect.y == 2.0) {
+    	col = mix(vec3(1.0, 1.0, 1.0), vec3(0.0, 0.0, 0.0), smoothstep(0.0, 0.5, dist / 10.0));
+
+    }
+
+    return col;
+}
+
+
+// From: https://www.shadertoy.com/view/Xds3zNs
+mat3 setCamera( in vec3 ro, in vec3 ta, float cr )
+{
+	vec3 cw = normalize(ta-ro);
+	vec3 cp = vec3(sin(cr), cos(cr),0.0);
+	vec3 cu = normalize( cross(cw,cp) );
+	vec3 cv =          ( cross(cu,cw) );
+    return mat3( cu, cv, cw );
+}
+
+
+void mainImage( out vec4 fragColor, in vec2 fragCoord )
+{
+    // Normalized pixel coordinates (from 0 to 1)
+    vec2 uv = fragCoord/iResolution.xy;
+
+    vec2  p = (2.0*fragCoord-iResolution.xy)/iResolution.y;
+
+    // Calculate camera psition/direction.
+    vec3 ta = vec3( 0.0, 0.0, 0.0 );
+    vec3 ro = ta + vec3( 4.5, 1.0 + 2.0, 4.5 );
+    mat3 ca = setCamera( ro, ta, 0.0);
+    vec3 rd = ca * normalize( vec3(p,2.5) );
+
+    vec3 col = vec3(0.0, 0.0, 0.0);
+    vec3 dir = normalize(vec3(p, -1.0));
+
+
+    // Light Beam
+    vec2 isect2 = rayCastBeam(ro, rd);
+
+    vec3 pos = ro + isect2.x * rd;
+
+    if (isect2.y == 2.0) {
+        col += (fog(pos, rd, dir));
+    }
+
+
+    fragColor = vec4(col,1.0);
+}
